@@ -195,16 +195,20 @@ Format code with Prettier:
 npm run format
 ```
 ## Environment Files
+```
 File	Purpose
 .env.local	Local development
 .env.docker	Docker container runtime
 .env.test	Jest test environment
+```
 
 ## Docs
 
 Documentation and design notes live in 
+```
 docs/PROJECT_OVERVIEW.md
 docs/PROJECT_DOCUMENTATION_DEV.md
+```
 
 ## Hidden Architectural Strengths
 
