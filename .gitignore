@@ -1,0 +1,86 @@
+# ========================================
+# Node.js + TypeScript + Docker Project
+# Play History Service — Safe for Git
+# ========================================
+
+# Node dependencies
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Tests & coverage
+coverage/
+*.test.ts
+*.spec.ts
+jest-coverage/
+test-results.json
+__tests__/
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# OS / editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.iml
+
+# Cache / temp files
+.cache/
+tmp/
+.temp/
+*.tmp
+*.swp
+*.pid
+*.pid.lock
+
+# Git / Docker
+.git/
+.docker/
+docker-compose.override.yml
+*.bak
+*.backup
+
+# ========================================
+# Environment Files
+# ========================================
+
+# Ignore top-level .env files
+.env
+.env.local
+.env.test
+.env.docker
+
+# Allow all config envs to be committed
+!src/config/
+!src/config/.env
+!src/config/.env.local
+!src/config/.env.test
+!src/config/.env.docker
+!src/config/.env.example
+
+# ========================================
+# Project-specific data
+# ========================================
+
+play_history_data/
+migrations/*.backup
+migrations/*.tmp
+*.sql~
+
+# ESLint / Prettier caches
+.eslintcache
+.prettierignore
+.prettiercache

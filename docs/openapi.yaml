@@ -1,0 +1,246 @@
+openapi: 3.1.0
+info:
+  title: Play History Service API
+  version: 1.0.0
+  description: >
+    REST API for tracking and analyzing user playback activity.  
+    Provides endpoints for play events, user history, analytics, health checks, and GDPR deletion.
+
+servers:
+  - url: http://localhost:3000
+    description: Local server
+  - url: https://api.example.com
+    description: Production server
+
+tags:
+  - name: Playback
+    description: Record and retrieve playback events
+  - name: Analytics
+    description: Content insights and history
+  - name: GDPR
+    description: Data deletion and compliance
+  - name: Health
+    description: Service status and readiness
+
+paths:
+  /v1/play:
+    post:
+      tags: [Playback]
+      summary: Record a play event
+      description: Insert a single playback event for a user.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PlayEvent"
+      responses:
+        "200":
+          description: Event successfully recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlayEventResponse"
+        "400":
+          description: Invalid input data
+        "409":
+          description: Duplicate event_id (idempotent conflict)
+        "500":
+          description: Internal server error
+
+  /v1/history/{userId}:
+    get:
+      tags: [Analytics]
+      summary: Get user playback history
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+            minimum: 0
+      responses:
+        "200":
+          description: Paginated list of playback events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryResponse"
+        "400":
+          description: Invalid userId
+        "404":
+          description: No history found
+        "500":
+          description: Internal server error
+
+  /v1/most-watched:
+    get:
+      tags: [Analytics]
+      summary: Get most-watched content
+      description: >
+        Returns aggregated content watch counts between a start and end date.
+      parameters:
+        - name: start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+        - name: end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Ranked list of content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MostWatchedResponse"
+        "400":
+          description: Invalid or missing parameters
+        "500":
+          description: Internal server error
+
+  /v1/users/{userId}:
+    delete:
+      tags: [GDPR]
+      summary: Delete user data (GDPR)
+      description: >
+        Permanently deletes all playback records for the user and logs a tombstone.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User data deleted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GdprResponse"
+        "400":
+          description: Invalid UUID
+        "404":
+          description: User not found
+        "500":
+          description: Internal server error
+
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      responses:
+        "200":
+          description: API and database status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+components:
+  schemas:
+    PlayEvent:
+      type: object
+      required: [eventId, userId, contentId, device, playbackDuration, playedAt]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+          description: Unique identifier for the play event
+        userId:
+          type: string
+          format: uuid
+          description: User identifier
+        contentId:
+          type: string
+          format: uuid
+          description: Content identifier
+        device:
+          type: string
+          example: mobile
+        playbackDuration:
+          type: integer
+          minimum: 1
+          description: Duration of playback in seconds
+        playedAt:
+          type: string
+          format: date-time
+          description: ISO 8601 UTC timestamp
+
+    PlayEventResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "Play event recorded successfully"
+        eventId:
+          type: string
+          format: uuid
+
+    HistoryResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/PlayEvent"
+
+    MostWatchedResponse:
+      type: object
+      properties:
+        range:
+          type: object
+          properties:
+            start: { type: string, format: date-time }
+            end: { type: string, format: date-time }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              contentId: { type: string, format: uuid }
+              totalDuration: { type: integer }
+              totalPlays: { type: integer }
+
+    GdprResponse:
+      type: object
+      properties:
+        message:
+          type: string
+          example: "User data deleted under GDPR"
+        userId:
+          type: string
+          format: uuid
+        deletedRecords:
+          type: integer
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          example: ok
+        db:
+          type: string
+          example: play_history_service

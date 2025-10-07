@@ -1,0 +1,43 @@
+version: '3.9'
+services:
+  api:
+    build: .
+    container_name: play_history_api
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres
+      - DB_NAME=play_history_service
+      - DOCKER_ENV=true
+      - CORS_ORIGINS=https://your-prod-frontend.com
+    ports:
+      - "3000:3000"
+    restart: always
+    command: ["node", "dist/index.js"]
+
+  db:
+    image: postgres:16
+    container_name: play_history_db
+    restart: always
+    environment:
+      DOCKER_ENV: 'true'
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: play_history_service
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - play_history_data:/var/lib/postgresql/data
+    
+volumes:
+  play_history_data:
+

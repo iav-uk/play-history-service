@@ -1,0 +1,600 @@
+[PROJECT DOCUMENTATION] Development Tracking Log
+(contains technical details of implementation features, approach and development progres)
+
+- step 0: understand problem space and requirements
+- step 1: decide on architecture (decition arrived at a mock-microservice setup with a 3-part [API, server, data layer] backend core residing in a Docker container communicating with a separate 2nd Docker container where the DB resides)
+- step 2: decide project structure and organise files for known componets
+- step 3: decide on incremental implementation plan (start with minimal working solution connecting to DB in Docker and showcasing a working endpoint to add data, ingestion service)
+
+
+- step 4: implement ingestion service:
+-- initial package setup
+npm init -y // package.json init
+npm install fastify pg zod
+npm install -D typescript ts-node-dev jest @types/jest ts-jest @types/node eslint prettier @types/pg
+npx tsc --init // tsconfig.json init
+
+-- setting up scripts in package.json
+-- intitial DB setup with Docker (docker-compose setup, docker container creation, DB scripts, connecting to Docker container check inside DB)
+docker ps
+docker exec -it play_history_db psql -U postgres -d play_history_service
+\dt 
+
+-- dockerize API, set up "health" route, env tests, env logs on "npm run dev"
+**there will now be 2 versions
+**Local talking to Docker DB ("npm run dev")
+**Host (Node) -> localhost:5432 -> Docker (Postgres)
+**Node API (Fastify) on host machine with DOCKER_ENV=false, DB_HOST=localhost
+**Postgres, in Docker container, port 5432 exposed to host
+
+**AND
+
+**Docker 1 talking to Docker 2 ("docker compose up --build -d")
+**Docker (API) -> Docker (DB)
+**Node API (Fastify) on Docker container with DOCKER_ENV=true, DB_HOST=db
+**Postgres, in Docker container, exposed on the same Docker network
+
+
+// rebuild new container structure
+docker compose down --volumes
+docker-compose up -d
+npm run build
+docker compose up --build -d
+
+npm run dev
+...
+──────────────────────────────────────
+Environment: Local
+Hostname: <...>.local
+Startup: 2025-10-06T17:11:09.669Z
+DB Host: localhost
+DB Name: play_history_service
+──────────────────────────────────────
+...
+
+// OR (if Docker up for API)
+docker logs -f play_history_api
+...
+──────────────────────────────────────
+Environment: Docker
+Hostname: 477647aefca3
+Startup: 2025-10-06T17:25:52.655Z
+DB Host: db
+DB Name: play_history_service
+──────────────────────────────────────
+...
+
+// test Docker health route
+curl http://localhost:3000/health
+{"status":"ok","dbTime":"2025-10-06T17:38:58.783Z","env":{"environment":"Docker","dbHost":"db","dbName":"play_history_service","hostname":"5b778e8f3fa4","timestamp":"2025-10-06T17:38:58.776Z"}}%
+
+// environment split for local, docker and test, setup test db and normal db
+docker exec -it play_history_db psql -U postgres -c "CREATE DATABASE play_history_service_test;"
+docker exec -it play_history_db psql -U postgres -c "\l"
+psql -h localhost -U postgres -d play_history_service_test -f migrations/001_create_plays.sql
+docker exec -i play_history_db psql -U postgres -d play_history_service < migrations/001_create_plays.sql
+docker exec -it play_history_db psql -U postgres -d play_history_service -c "\dt"
+
+// run tests inside Docker
+docker exec -it play_history_api npm test
+
+--add db retry logic and check for conneciton ready, and db restart
+--add gracefull shutdown
+--add automatic test db inti and close
+
+-- explanation of chosen DB schema
+CREATE TABLE IF NOT EXISTS plays (
+  id BIGSERIAL PRIMARY KEY, --> surrogate key (auto-increment), useful for internal DB joins and indexing
+  event_id UUID UNIQUE NOT NULL, --> external unique identifier (used for idempotency), id internal but ensures deduplication on event_id
+  user_id UUID NOT NULL, --> required simple, can be FKs later for other tables like "users"
+  content_id UUID NOT NULL, --> required simple, can be FKs later for other tables like "content"
+  device TEXT NOT NULL, --> source of play, TEXT but could be an index later if analytics need it
+  playback_duration INTEGER NOT NULL CHECK (playback_duration >= 0), --> prevents negative durations, DB constraint to complement Zod validation 
+  played_at TIMESTAMPTZ NOT NULL DEFAULT now(), --> UTC timestamp of playback, store in UTC (TIMESTAMPTZ)
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now() --> DB insertion time, analytics, debugging and sync consistency (source vs. target)
+);
+CREATE INDEX idx_plays_user_playedat ON plays (user_id, played_at DESC); --> index for history by user, most recent first, to be used in "history" API endpoint 
+
+-- apply DB script manually
+psql -h localhost -U postgres -d play_history_service -f migrations/001_create_plays.sql
+
+when verifying the tables, they are present
+
+play_history_service=# \dt
+         List of relations
+ Schema | Name  | Type  |  Owner   
+--------+-------+-------+----------
+ public | plays | table | postgres
+(1 row)
+
+-- define endpoint for adding data, API versioning for safety and compatibility, endpoint added in "/routes" folder, and test  
+POST /v1/play
+
+-- setting up jest and first basic tests to test the service and DB connection, run tests and clean test run of any warnings (jest config should be .js for simplicity, DB connection closing after timeout, missing types for imports)
+npm test
+npx jest --detectOpenHandles
+
+-- manual test of the conneciton with insertion of data using curl
+npm run dev // server is running
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "a1b2c3d4-e5f6-7890-abcd-1234567890ab",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "web",
+    "playbackDuration": 300,
+    "playedAt": "2025-10-06T10:00:00Z"
+  }'
+{"status":"ok"}%  
+
+docker exec -it play_history_db psql -U postgres -d play_history_service
+
+play_history_service=# SELECT * FROM plays ORDER BY played_at DESC LIMIT 5;
+
+id |               event_id               |               user_id                |              content_id              | device | playback_duration |         played_at          |          created_at           
+----+--------------------------------------+--------------------------------------+--------------------------------------+--------+-------------------+----------------------------+-------------------------------
+  7 | b0c840ff-6475-4006-a99a-d3f7d3d8261e | 84c6e11f-08d9-4440-94e9-7c71431c4210 | ed9e7657-89e4-43bf-8130-ae29af12e5f6 | web    |               300 | 2025-10-06 11:10:00.617+00 | 2025-10-06 11:10:00.625754+00
+  8 | a1b2c3d4-e5f6-7890-abcd-1234567890ab | 123e4567-e89b-12d3-a456-426614174000 | 987e6543-e21b-12d3-a456-426614174999 | web    |               300 | 2025-10-06 10:00:00+00     | 2025-10-06 11:13:32.277256+00
+(2 rows)
+
+-- test edge cases
+
+// missing required field
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "11111111-1111-1111-1111-111111111111",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "device": "web",
+    "playbackDuration": 120
+  }'
+  {"message":"Validation failed","errors":[{"path":"eventId","message":"Invalid UUID format"},{"path":"contentId","message":"Invalid input: expected string, received undefined"},{"path":"playedAt","message":"Invalid input: expected string, received undefined"}]}%
+
+// invalid UUID format
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "not-a-uuid",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "mobile",
+    "playbackDuration": 240,
+    "playedAt": "2025-10-06T10:30:00Z"
+  }'
+  {"message":"Validation failed","errors":[{"path":"eventId","message":"Invalid UUID format"}]}%   
+
+  // negative or 0 playback duration
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "22222222-2222-2222-2222-222222222222",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "tv",
+    "playbackDuration": -10,
+    "playedAt": "2025-10-06T10:45:00Z"
+  }'
+  {"message":"Validation failed","errors":[{"path":"eventId","message":"Invalid UUID format"},{"path":"playbackDuration","message":"Playback duration must be greater than 0"}]}%
+
+  // duplicate eventId (idempotency)
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "33333333-3333-3333-3333-333333333333",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "web",
+    "playbackDuration": 120,
+    "playedAt": "2025-10-06T11:00:00Z"
+  }'
+  {"message":"Validation failed","errors":[{"path":"eventId","message":"Invalid UUID format"}]}% 
+
+  // invalid timestamp
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "44444444-4444-4444-4444-444444444444",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "web",
+    "playbackDuration": 300,
+    "playedAt": "invalid-date"
+  }'
+  {"message":"Validation failed","errors":[{"path":"eventId","message":"Invalid UUID format"},{"path":"playedAt","message":"playedAt must be an ISO 8601 UTC timestamp (e.g. 2025-10-06T10:00:00Z)"}]}% 
+
+// verification inside DB on Docker container
+docker exec -it play_history_db psql -U postgres -d play_history_service  
+
+play_history_service=# SELECT * FROM plays WHERE user_id = '123e4567-e89b-12d3-a456-426614174000';
+
+id |               event_id               |               user_id                |              content_id              | device | playback_duration |       played_at        |          created_at           
+----+--------------------------------------+--------------------------------------+--------------------------------------+--------+-------------------+------------------------+-------------------------------
+  8 | a1b2c3d4-e5f6-7890-abcd-1234567890ab | 123e4567-e89b-12d3-a456-426614174000 | 987e6543-e21b-12d3-a456-426614174999 | web    |               300 | 2025-10-06 10:00:00+00 | 2025-10-06 11:13:32.277256+00
+(1 row)
+
+
+-- [REQUIREMENT] ensure graceful fail on duplicate entry, with user error message, test and DB check, integration for all edge cases including duplicate entries
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "33333333-3333-4333-8333-333333333333",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "web",
+    "playbackDuration": 120,
+    "playedAt": "2025-10-06T11:00:00Z"
+  }'
+  {"status":"ok"}%  
+
+  curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "33333333-3333-4333-8333-333333333333",
+    "userId": "123e4567-e89b-12d3-a456-426614174000",
+    "contentId": "987e6543-e21b-12d3-a456-426614174999",
+    "device": "web",
+    "playbackDuration": 120,
+    "playedAt": "2025-10-06T11:00:00Z"
+  }'
+  {"status":"ok","message":"Duplicate event ignored (idempotent)"}%  
+
+// verification inside DB on Docker container
+docker exec -it play_history_db psql -U postgres -d play_history_service  
+
+play_history_service=# SELECT COUNT(*) FROM plays WHERE event_id = '33333333-3333-4333-8333-333333333333';
+
+ count 
+-------
+     1
+(1 row)
+
+- step 5: expland app with fully functioning ingestion service by addin the "history" endpoint feature (sorted most recent first, pagination)
+-- define endpoint for user "history", API versioning for safety and compatibility, endpoint added in "/routes" folder, and test
+GET /v1/history/:userId?limit=&offset=
+
+// userId - required
+// limit - page size
+// offset - pagination offset
+
+// response
+{
+  "userId": "123e4567-e89b-12d3-a456-426614174000",
+  "total": 42,
+  "limit": 10,
+  "offset": 0,
+  "items": [
+    {
+      "contentId": "987e6543-e21b-12d3-a456-426614174999",
+      "device": "web",
+      "playbackDuration": 300,
+      "playedAt": "2025-10-06T11:00:00.000Z"
+    }
+  ]
+}
+
+-- integration test and fix issues (Postgres returns snake_case column names vs. camelCase properties)
+npm test
+
+-- test insertion and sorted "history" response via curl 
+USER_ID="123e4567-e89b-12d3-a456-426614174000"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"10000000-0000-4000-8000-000000000001\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"20000000-0000-4000-8000-000000000001\",
+    \"device\": \"web\",
+    \"playbackDuration\": 200,
+    \"playedAt\": \"2025-10-06T12:00:00Z\"
+  }"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"10000000-0000-4000-8000-000000000002\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"20000000-0000-4000-8000-000000000002\",
+    \"device\": \"tv\",
+    \"playbackDuration\": 180,
+    \"playedAt\": \"2025-10-06T13:00:00Z\"
+  }"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"10000000-0000-4000-8000-000000000003\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"20000000-0000-4000-8000-000000000003\",
+    \"device\": \"mobile\",
+    \"playbackDuration\": 240,
+    \"playedAt\": \"2025-10-06T14:00:00Z\"
+  }"
+
+{"status":"ok"}{"status":"ok"}{"status":"ok"}% 
+
+curl "http://localhost:3000/v1/history/$USER_ID"
+{"userId":"123e4567-e89b-12d3-a456-426614174000","total":3,"limit":20,"offset":0,"items":[{"contentId":"20000000-0000-4000-8000-000000000003","device":"mobile","playbackDuration":240,"playedAt":"2025-10-06T14:00:00.000Z"},{"contentId":"20000000-0000-4000-8000-000000000002","device":"tv","playbackDuration":180,"playedAt":"2025-10-06T13:00:00.000Z"},{"contentId":"20000000-0000-4000-8000-000000000001","device":"web","playbackDuration":200,"playedAt":"2025-10-06T12:00:00.000Z"}]}% 
+
+-- test pagination via curl
+
+// first page
+curl "http://localhost:3000/v1/history/$USER_ID?limit=2&offset=0"
+{"userId":"123e4567-e89b-12d3-a456-426614174000","total":3,"limit":2,"offset":0,"items":[{"contentId":"20000000-0000-4000-8000-000000000003","device":"mobile","playbackDuration":240,"playedAt":"2025-10-06T14:00:00.000Z"},{"contentId":"20000000-0000-4000-8000-000000000002","device":"tv","playbackDuration":180,"playedAt":"2025-10-06T13:00:00.000Z"}]}
+
+// second page
+curl "http://localhost:3000/v1/history/$USER_ID?limit=2&offset=2"
+{"userId":"123e4567-e89b-12d3-a456-426614174000","total":3,"limit":2,"offset":2,"items":[{"contentId":"20000000-0000-4000-8000-000000000001","device":"web","playbackDuration":200,"playedAt":"2025-10-06T12:00:00.000Z"}]}%   
+
+-- test validation
+curl "http://localhost:3000/v1/history/not-a-uuid"
+{"message":"Validation failed","errors":[{"path":"userId","message":"Invalid UUID format"}]}%  
+
+-- handle edge cases, integration test and curl test
+
+// user has no plays in DB
+curl "http://localhost:3000/v1/history/123e4567-e89b-12d3-a456-426614174001"
+{"userId":"123e4567-e89b-12d3-a456-426614174001","total":0,"limit":20,"offset":0,"items":[]}% 
+
+// not a UUID
+curl "http://localhost:3000/v1/history/not-a-uuid"
+{"message":"Validation failed","errors":[{"path":"userId","message":"Invalid UUID format"}]}% 
+
+// pagination: beyond available items - [] with real total
+curl "http://localhost:3000/v1/history/123e4567-e89b-12d3-a456-426614174000?limit=5&offset=100"
+{"userId":"123e4567-e89b-12d3-a456-426614174000","total":1,"limit":5,"offset":100,"items":[]}% 
+
+// pagination: invalid limit
+curl -s "http://localhost:3000/v1/history/223e4567-e89b-12d3-a456-426614174000?limit=-5" | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "limit",
+      "message": "Too small: expected number to be >=1"
+    }
+  ]
+}
+
+// pagination — invalid offset
+curl -s "http://localhost:3000/v1/history/223e4567-e89b-12d3-a456-426614174000?offset=-1" | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "offset",
+      "message": "Too small: expected number to be >=0"
+    }
+  ]
+}
+
+
+
+- step 6: expland app by addin the "mostWatched" endpoint feature (aggregation with SQL GROUP BY and date filtering)
+-- define endpoint for user "mostWatched", API versioning for safety and compatibility, endpoint added in "/routes" folder, and test
+GET /v1/most-watched?from=&to=
+
+// from - required
+// to - required
+
+// response
+{
+  "from": "2025-10-01T00:00:00Z",
+  "to": "2025-10-06T23:59:59Z",
+  "items": [
+    { "contentId": "987e6543-e21b-12d3-a456-426614174999", "totalPlays": 12, "totalDuration": 3600 },
+    { "contentId": "123e4567-e89b-12d3-a456-426614174222", "totalPlays": 8, "totalDuration": 2400 }
+  ]
+}
+
+-- integration test and fix issues (Postgres returns snake_case column names vs. camelCase properties)
+npm test
+
+-- test via curl
+curl "http://localhost:3000/v1/most-watched?from=2025-10-01T00:00:00Z&to=2025-10-07T00:00:00Z"
+{"from":"2025-10-01T00:00:00Z","to":"2025-10-07T00:00:00Z","items":[{"contentId":"6ebb794f-7666-494c-af1e-6c85a2f16218","totalPlays":1,"totalDuration":300}]}% 
+
+USER_ID="123e4567-e89b-12d3-a456-426614174000"
+NOW=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+FROM="2025-10-01T00:00:00Z"
+TO="2025-10-10T00:00:00Z"
+CONTENT_A="11111111-1111-4111-8111-111111111111"
+CONTENT_B="22222222-2222-4222-8222-222222222222"
+
+// Play 3 times CONTENT_A
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"aaaa1111-aaaa-4111-8111-111111111111\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"$CONTENT_A\",
+    \"device\": \"web\",
+    \"playbackDuration\": 180,
+    \"playedAt\": \"2025-10-05T10:00:00Z\"
+  }"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"aaaa1111-aaaa-4111-8111-111111111112\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"$CONTENT_A\",
+    \"device\": \"tv\",
+    \"playbackDuration\": 200,
+    \"playedAt\": \"2025-10-06T11:00:00Z\"
+  }"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"aaaa1111-aaaa-4111-8111-111111111113\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"$CONTENT_A\",
+    \"device\": \"mobile\",
+    \"playbackDuration\": 160,
+    \"playedAt\": \"2025-10-07T09:30:00Z\"
+  }"
+
+// Play 2 times CONTENT_B
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"bbbb2222-bbbb-4222-8222-222222222221\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"$CONTENT_B\",
+    \"device\": \"tv\",
+    \"playbackDuration\": 240,
+    \"playedAt\": \"2025-10-07T12:00:00Z\"
+  }"
+
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"eventId\": \"bbbb2222-bbbb-4222-8222-222222222222\",
+    \"userId\": \"$USER_ID\",
+    \"contentId\": \"$CONTENT_B\",
+    \"device\": \"web\",
+    \"playbackDuration\": 180,
+    \"playedAt\": \"2025-10-08T14:00:00Z\"
+  }"
+
+{"status":"ok"}{"status":"ok"}{"status":"ok"}{"status":"ok"}{"status":"ok"}% 
+
+curl "http://localhost:3000/v1/most-watched?from=$FROM&to=$TO"
+{"from":"2025-10-01T00:00:00Z","to":"2025-10-10T00:00:00Z","items":[{"contentId":"11111111-1111-4111-8111-111111111111","totalPlays":3,"totalDuration":540},{"contentId":"22222222-2222-4222-8222-222222222222","totalPlays":2,"totalDuration":420},{"contentId":"6ebb794f-7666-494c-af1e-6c85a2f16218","totalPlays":1,"totalDuration":300}]}%
+
+-- edge cases check
+// missing date range
+curl -s http://localhost:3000/v1/most-watched | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "from",
+      "message": "Invalid input: expected string, received undefined"
+    },
+    {
+      "path": "to",
+      "message": "Invalid input: expected string, received undefined"
+    }
+  ]
+}
+
+// invalid from
+curl -s "http://localhost:3000/v1/most-watched?from=invalid&to=2025-10-07T00:00:00Z" | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "from",
+      "message": "Invalid 'from' date format"
+    },
+    {
+      "path": "",
+      "message": "'from' must be earlier than 'to'"
+    }
+  ]
+}
+
+// ivalid to
+curl -s "http://localhost:3000/v1/most-watched?from=2025-10-06T00:00:00Z&to=notadate" | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "to",
+      "message": "Invalid 'to' date format"
+    },
+    {
+      "path": "",
+      "message": "'from' must be earlier than 'to'"
+    }
+  ]
+}
+
+// empty range, no plays
+curl -s "http://localhost:3000/v1/most-watched?from=2025-01-01T00:00:00Z&to=2025-01-02T00:00:00Z" | jq
+{
+  "from": "2025-01-01T00:00:00Z",
+  "to": "2025-01-02T00:00:00Z",
+  "items": []
+}
+
+// reversed date range
+curl -s "http://localhost:3000/v1/most-watched?from=2025-10-07T00:00:00Z&to=2025-10-06T00:00:00Z" | jq
+{
+  "message": "Validation failed",
+  "errors": [
+    {
+      "path": "",
+      "message": "'from' must be earlier than 'to'"
+    }
+  ]
+}
+
+- step 7: expand app with GDPR feature
+-- define endpoint for user DELETE, API versioning for safety and compatibility, endpoint added in "/routes" folder, and test
+DELETE /v1/users/:userId
+
+// set local db up
+psql -h localhost -U postgres -d play_history_service -f migrations/002_create_gdpr_tombstones.sql
+
+// test curl
+curl -v -X DELETE http://localhost:3000/v1/users/123e4567-e89b-42d3-a456-426614174000
+{"message":"User data deleted under GDPR","userId":"123e4567-e89b-42d3-a456-426614174000","deletedRecords":0}
+
+--test edge cases
+// user previously deleted, can't be added
+curl -X POST http://localhost:3000/v1/play \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "0d5b7b41-43a0-4c75-b4bb-2e91c1a10001",
+    "userId": "123e4567-e89b-42d3-a456-426614174000",
+    "contentId": "111e2222-e33b-44d3-a456-426614174111",
+    "device": "web",
+    "playbackDuration": 180,
+    "playedAt": "2025-10-07T09:00:00Z"
+  }'
+{"message":"User data previously deleted under GDPR. Ingestion blocked."}%
+
+//multiple records deletion
+curl -X DELETE http://localhost:3000/v1/users/123e4567-e89b-42d3-a456-426614174020
+{"message":"User data deleted under GDPR","userId":"123e4567-e89b-42d3-a456-426614174020","deletedRecords":2}% 
+
+//invalid id
+curl -X DELETE http://localhost:3000/v1/users/not-a-uuid
+{"message":"Validation failed","errors":[{"path":"userId","message":"Invalid UUID format"}]}% 
+
+// deleting the same user
+curl -X DELETE http://localhost:3000/v1/users/123e4567-e89b-42d3-a456-426614174020
+{"message":"User data deleted under GDPR","userId":"123e4567-e89b-42d3-a456-426614174020","deletedRecords":0}% 
+
+-step 8: other improvements
+--centralised error handler, logger
+
+--step 9: include OpenAPI docs
+npm install @fastify/swagger @fastify/swagger-ui zod-to-json-schema --legacy-peer-deps
+[NOTE] blocked by unresolved errors, could not introduce automatic generated API Docs
+
+--cors
+curl -X POST http://localhost:3000/v1/play \
+  -H "Origin: http://localhost:3000" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "eventId": "123e4567-e89b-42d3-a456-426614174000",
+    "userId": "123e4567-e89b-42d3-a456-426614174111",
+    "contentId": "123e4567-e89b-42d3-a456-426614174222",
+    "device": "web",
+    "playbackDuration": 60,
+    "playedAt": "2025-10-07T00:00:00Z"
+  }'
+
+-----
+-----
+
+IMPROVEMENTS: better pagination (cursor-based), more metrics and tracing, caching for /most-watched (Redis or in-memory), authentification and Token-based API gating with rate limiting, useses transactions (BEGIN / COMMIT / ROLLBACK), use query builders
+
+
+
