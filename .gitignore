@@ -19,11 +19,8 @@ out/
 
 # Tests & coverage
 coverage/
-*.test.ts
-*.spec.ts
 jest-coverage/
 test-results.json
-__tests__/
 
 # Logs
 logs/
