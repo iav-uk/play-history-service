@@ -144,7 +144,7 @@ DELETE	/v1/users/:userId	GDPR: delete user data
 GET	/health	Health check
 ```
 # Example Requests
-##Record Play
+## Record Play
 ```
 curl -X POST http://localhost:3000/v1/play \
   -H "Content-Type: application/json" \
@@ -157,7 +157,7 @@ curl -X POST http://localhost:3000/v1/play \
     "playedAt": "2025-10-07T10:00:00Z"
   }'
 ```
-##Fetch History
+## Fetch History
 ```
 curl "http://localhost:3000/v1/history/b6b3a9e9-9819-46a5-8d8a-04d9eab271d3?limit=5&offset=0"
 ```
