@@ -36,7 +36,7 @@ It records, retrieves, and manages user playback activity — complete with pagi
 **Dockerized**
 - Fully containerized with PostgreSQL  
 - Works in both **local** and **production** modes
-- The are 2 versions of the app:
+- There are 2 versions of the app:
     - LOCALHOST Server + Docker DB (Postgress)
     - Docker Server + (separate) Docker DB (Postgress)
 
