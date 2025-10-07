@@ -66,83 +66,85 @@ It records, retrieves, and manages user playback activity — complete with pagi
 ## Installation (see PROJECT_DOCUMENTATION_DEV for more details)
 
 ### Clone the repo
+```
 git clone https://github.com/<user>/play-history-service.git
 cd play-history-service
-
+```
 ### Install dependencies
+```
 npm install
-
+```
 ### Configure environment
 (if needed)
 Then edit variables as needed:
-
+```
 DB_HOST=localhost
 DB_PORT=5432
 DB_USER=postgres
 DB_PASSWORD=postgres
 DB_NAME=play_history_service
-
+```
 ### Running with Docker
 
 Start both API and DB:
-
+```
 docker compose up -d
-
+```
 
 Then check:
-
+```
 curl http://localhost:3000/health
-
+```
 You should see:
-
+```
 { "status": "ok", "db": "play_history_service" }
-
+```
 ### Running Locally (without Docker)
 
 Start PostgreSQL (manually or via Docker):
-
+```
 docker compose up -d db
-
+```
 
 Run the service:
-
+```
 npm run dev
-
+```
 
 Test health:
-
+```
 curl http://localhost:3000/health
-
+```
 ### Testing
 
 Run all Jest tests:
-
+```
 npm test
-
+```
 Test output
-
+```
 Test Suites: 8 passed, 8 total
 Tests:       23 passed, 23 total
 Snapshots:   0 total
 Time:        1.481 s, estimated 2 s
 Ran all test suites.
-
+```
 
 To test inside Docker:
-
+```
 docker exec -it play_history_api npm test
-
+```
 ## API Endpoints
-
+```
 Method	Path	Description
 POST	/v1/play	Record a play event
 GET	/v1/history/:userId	Get a user’s play history
 GET	/v1/most-watched	Most watched content in date range
 DELETE	/v1/users/:userId	GDPR: delete user data
 GET	/health	Health check
-
+```
 # Example Requests
-
+```
 ##Record Play
 curl -X POST http://localhost:3000/v1/play \
   -H "Content-Type: application/json" \
@@ -154,16 +156,19 @@ curl -X POST http://localhost:3000/v1/play \
     "playbackDuration": 180,
     "playedAt": "2025-10-07T10:00:00Z"
   }'
-
+```
 ##Fetch History
+```
 curl "http://localhost:3000/v1/history/b6b3a9e9-9819-46a5-8d8a-04d9eab271d3?limit=5&offset=0"
-
+```
 ### Most Watched
+```
 curl "http://localhost:3000/v1/most-watched?start=2025-10-01T00:00:00Z&end=2025-10-07T00:00:00Z"
-
+```
 ### GDPR Delete
+```
 curl -X DELETE "http://localhost:3000/v1/users/b6b3a9e9-9819-46a5-8d8a-04d9eab271d3"
-
+```
 ## Project Structure
 src/
 ├── app.ts               # Fastify app setup
@@ -179,14 +184,14 @@ src/
 33 Linting & Formatting
 
 Run ESLint:
-
+```
 npm run lint
-
+```
 
 Format code with Prettier:
-
+```
 npm run format
-
+```
 ## Environment Files
 File	Purpose
 .env.local	Local development
@@ -195,7 +200,9 @@ File	Purpose
 
 ## Docs
 
-Documentation and design notes live in docs/PROJECT_OVERVIEW.md.
+Documentation and design notes live in 
+docs/PROJECT_OVERVIEW.md
+docs/PROJECT_DOCUMENTATION_DEV.md
 
 ## Hidden Architectural Strengths
 
@@ -264,6 +271,7 @@ Every error — validation, DB, or runtime — follows a predictable shape:
 Hidden benefit: Makes frontend debugging and automated monitoring much easier.
 
 # Server Architecture Choice (please note, not all the parts are present, like the cache, just for refrence)
+```
 ┌─────────────────────────────┐
 │          API Layer          │    Fastify routes, request validation, docs
 ├─────────────────────────────┤
@@ -287,7 +295,7 @@ Hidden benefit: Makes frontend debugging and automated monitoring much easier.
                   |  Aggregation Jobs / Workers |
                   | (Kafka, Cron, BullMQ, etc.) |
                   +-----------------------------+
-
+```
 
 ### Test Coverage Report
 ------------------------|---------|----------|---------|---------|----------------------------------------
