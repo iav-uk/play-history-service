@@ -183,7 +183,7 @@ src/
 └── migrations/          # SQL migrations
 ```
 
-33 Linting & Formatting
+## Linting & Formatting
 
 Run ESLint:
 ```
