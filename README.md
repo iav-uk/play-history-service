@@ -144,8 +144,8 @@ DELETE	/v1/users/:userId	GDPR: delete user data
 GET	/health	Health check
 ```
 # Example Requests
-```
 ##Record Play
+```
 curl -X POST http://localhost:3000/v1/play \
   -H "Content-Type: application/json" \
   -d '{
@@ -169,6 +169,7 @@ curl "http://localhost:3000/v1/most-watched?start=2025-10-01T00:00:00Z&end=2025-
 ```
 curl -X DELETE "http://localhost:3000/v1/users/b6b3a9e9-9819-46a5-8d8a-04d9eab271d3"
 ```
+```
 ## Project Structure
 src/
 ├── app.ts               # Fastify app setup
@@ -180,6 +181,7 @@ src/
 ├── config/              # Env & setup
 ├── tests/               # Jest integration tests
 └── migrations/          # SQL migrations
+```
 
 33 Linting & Formatting
 
@@ -262,12 +264,14 @@ Hidden benefit: Plug-and-play ready for ELK, Loki, or Datadog ingestion.
 
 9. Consistent Error Responses
 Every error — validation, DB, or runtime — follows a predictable shape:
+```
 {
   "message": "Validation failed",
   "errors": [
     { "path": "userId", "message": "Invalid UUID format" }
   ]
 }
+```
 Hidden benefit: Makes frontend debugging and automated monitoring much easier.
 
 # Server Architecture Choice (please note, not all the parts are present, like the cache, just for refrence)
