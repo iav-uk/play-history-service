@@ -3,8 +3,6 @@
 
 ## **docs/PROJECT_OVERVIEW.md**
 
-Use this for deeper notes — architecture, design choices, etc.
-
 ```markdown
 # Project Overview
 
